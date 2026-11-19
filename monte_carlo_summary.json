@@ -1,0 +1,35 @@
+{
+  "demand_satisfaction_ratio": {
+    "mean": 0.556796946714198,
+    "p05": 0.5129804857417883,
+    "median": 0.5560494731398069,
+    "p95": 0.6007538235772507
+  },
+  "total_unmet_m3": {
+    "mean": 744.7132732119984,
+    "p05": 667.5417085881463,
+    "median": 746.071559066015,
+    "p95": 817.5466634820343
+  },
+  "total_grid_energy_kwh": {
+    "mean": 0.0,
+    "p05": 0.0,
+    "median": 0.0,
+    "p95": 0.0
+  },
+  "minimum_battery_soc": {
+    "mean": 0.2,
+    "p05": 0.2,
+    "median": 0.2,
+    "p95": 0.2
+  },
+  "minimum_reservoir_m3": {
+    "mean": 0.0,
+    "p05": 0.0,
+    "median": 0.0,
+    "p95": 0.0
+  },
+  "probability_satisfaction_at_least_95pct": 0.0,
+  "n_simulations": 250,
+  "seed": 42
+}
