@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.DS_Store
+baseline_results.csv
+monte_carlo_samples.csv
+monte_carlo_summary.json
+baseline_plot.png
