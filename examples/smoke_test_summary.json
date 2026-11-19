@@ -1,0 +1,50 @@
+{
+  "baseline": {
+    "total_demand_m3": 1344.0,
+    "total_delivered_m3": 1344.0,
+    "total_unmet_m3": 0.0,
+    "demand_satisfaction_ratio": 1.0,
+    "total_pv_generation_kwh": 261.1299124119246,
+    "total_grid_energy_kwh": 0.0,
+    "total_grid_cost": 0.0,
+    "minimum_battery_soc": 0.2,
+    "minimum_reservoir_m3": 44.0,
+    "maximum_reservoir_m3": 80.0,
+    "pump_unavailable_hours": 0
+  },
+  "monte_carlo": {
+    "demand_satisfaction_ratio": {
+      "mean": 1.0,
+      "p05": 1.0,
+      "median": 1.0,
+      "p95": 1.0
+    },
+    "total_unmet_m3": {
+      "mean": 0.0,
+      "p05": 0.0,
+      "median": 0.0,
+      "p95": 0.0
+    },
+    "total_grid_energy_kwh": {
+      "mean": 0.0,
+      "p05": 0.0,
+      "median": 0.0,
+      "p95": 0.0
+    },
+    "minimum_battery_soc": {
+      "mean": 0.19999999999999996,
+      "p05": 0.2,
+      "median": 0.2,
+      "p95": 0.2
+    },
+    "minimum_reservoir_m3": {
+      "mean": 44.00481189206059,
+      "p05": 42.57554128787547,
+      "median": 43.84627065680589,
+      "p95": 45.325785830146444
+    },
+    "probability_satisfaction_at_least_95pct": 1.0,
+    "n_simulations": 50,
+    "seed": 42
+  }
+}
