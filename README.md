@@ -51,9 +51,12 @@ Engineering decisions require site-specific data, independent review by qualifie
 - [x] Deterministic coupled solar-water baseline model
 - [x] Initial Monte Carlo uncertainty wrapper
 - [x] Basic automated tests and reproducible demo
-- [ ] Reservoir-aware, demand-responsive pump dispatch
-- [ ] Energy and mass conservation test suite
-- [ ] Correlated weather, demand, and equipment scenarios
+- [x] Pump/borehole hydraulics: centrifugal curves, shut-off head, drawdown (v0.2)
+- [x] Reservoir-aware pump dispatch (v0.2)
+- [x] Energy and mass conservation test suite (v0.2)
+- [x] Correlated weather, demand, and failure-repair scenarios (v0.2)
+- [ ] Site weather ingestion (PVGIS / NASA POWER) and plane-of-array transposition via pvlib
+- [ ] Fit Markov weather and failure parameters to measured data
 - [ ] Benchmarking against analytical cases and established modelling tools
 - [ ] Optimisation of pumping and storage schedules
 - [ ] Calibration and validation using measured installation data

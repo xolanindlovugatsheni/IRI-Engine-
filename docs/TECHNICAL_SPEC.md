@@ -120,3 +120,56 @@ Aggregate:
 - Random seed reproducibility demonstrated.
 - Limitations visible in all generated reports.
 - No claim of certification or validated field accuracy without evidence.
+
+---
+
+## 10. v0.2 additions (branch `v0.2-core`)
+
+### 10.1 Pump and borehole hydraulics (`iri/pump.py`)
+
+v0.1 delivered flow proportional to supplied power at fixed head. That is an
+ideal positive-displacement pump with no drawdown; it remains the default
+(`legacy_pump`) so v0.1 results are reproducible.
+
+System curve (Q in m3/h):
+
+    H_sys(Q) = H_static + B*Q + (C + k_f)*Q^2
+
+B and C are the Jacob aquifer and well-loss coefficients; `borehole_from_test`
+splits a single pumping-test drawdown into B and C (a step-drawdown test
+should replace that split). Centrifugal pump on a variable-speed drive:
+
+    H_pump(Q, n) = n^2 H_0 - a Q^2,  a = (H_0 - H_r)/Q_r^2
+    eta(Q, n)    = eta_bep (2x - x^2),  x = Q/(n Q_r)
+
+The operating point solves H_pump = H_sys. Below the speed at which
+n^2 H_0 = H_static no water flows; the controller will not start below that
+minimum power. Power <-> flow is tabulated once per pump and interpolated in
+the time loop.
+
+### 10.2 Dispatch
+
+`dispatch_policy="reservoir_aware"` requests only the flow that fits the
+reservoir headroom plus the hour's demand (no overflow by construction) and
+lets the battery drive the pump only below `battery_pumping_below_level`.
+
+### 10.3 Scenario generators (`iri/scenarios.py`, `run_scenarios`)
+
+- Daily irradiance: two-state (clear/overcast) Markov chain; spell length
+  1/p(overcast->clear) days. Fit to site daily data before use.
+- Demand: AR(1) daily multiplier with optional coupling to clearness.
+- Pump availability: alternating renewal process, exponential time to
+  failure, lognormal repair time.
+- Service probability reported with a Wilson 95% interval.
+
+### 10.4 New outputs
+
+`pv_curtailed_kw`, `pump_head_m`, `hours_with_unmet_demand`,
+`longest_unmet_spell_hours`, `total_overflow_m3`, `total_pv_curtailed_kwh`.
+
+### 10.5 Verification
+
+`tests/test_v02.py`: energy conservation (PV used + stored + curtailed),
+battery energy balance, reservoir mass balance, v0.1 reproduction, centrifugal
+rated-point and cut-off behaviour, no-overflow dispatch, long-run availability
+of the failure process, Markov spell statistics, scenario reproducibility.

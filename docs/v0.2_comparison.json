@@ -1,0 +1,59 @@
+{
+  "v0.1 baseline": {
+    "demand_satisfaction_ratio": 0.558,
+    "longest_unmet_spell_hours": 15,
+    "total_overflow_m3": 0.0,
+    "total_pv_curtailed_kwh": 0.0
+  },
+  "+ centrifugal pump & borehole drawdown": {
+    "demand_satisfaction_ratio": 0.512,
+    "longest_unmet_spell_hours": 17,
+    "total_overflow_m3": 0.0,
+    "total_pv_curtailed_kwh": 0.0
+  },
+  "+ reservoir-aware dispatch": {
+    "demand_satisfaction_ratio": 0.512,
+    "longest_unmet_spell_hours": 17,
+    "total_overflow_m3": 0.0,
+    "total_pv_curtailed_kwh": 0.0
+  },
+  "energy bound (PV kWh / pump kWh needed)": 0.532,
+  "sizing sweep (satisfaction)": {
+    "PV 4 kW / tank 60 m3": 0.512,
+    "PV 4 kW / tank 120 m3": 0.524,
+    "PV 4 kW / tank 240 m3": 0.548,
+    "PV 6 kW / tank 60 m3": 0.694,
+    "PV 6 kW / tank 120 m3": 0.705,
+    "PV 6 kW / tank 240 m3": 0.729,
+    "PV 8 kW / tank 60 m3": 0.729,
+    "PV 8 kW / tank 120 m3": 0.741,
+    "PV 8 kW / tank 240 m3": 0.765,
+    "PV 12 kW / tank 60 m3": 0.751,
+    "PV 12 kW / tank 120 m3": 0.763,
+    "PV 12 kW / tank 240 m3": 0.787
+  },
+  "design under test": "8 kW PV direct-drive (no battery), 24 m3/h borehole pump, 180 m3 tank, 120 m3/day demand, 28 days, 300 scenarios",
+  "centrifugal: minimum power before any water flows (kW of rated)": [
+    0.99,
+    3.49
+  ],
+  "deterministic, v0.2 physics": {
+    "demand_satisfaction_ratio": 1.0,
+    "longest_unmet_spell_hours": 0,
+    "total_overflow_m3": 0.0,
+    "total_pv_curtailed_kwh": 461.333
+  },
+  "P(>=95% of demand met)": {
+    "v0.1 iid hourly MC, v0.1 pump": 1.0,
+    "Markov weather, v0.1 pump": 1.0,
+    "Markov weather, centrifugal + drawdown": 0.84,
+    "+ failure-repair (MTTF 120 d, MTTR median 7 d)": 0.623
+  },
+  "p95 longest outage (h)": {
+    "v0.1 iid": null,
+    "Markov, v0.1 pump": 10.050000000000011,
+    "Markov, centrifugal": 30.05000000000001,
+    "+ failure-repair": 277.05
+  },
+  "seconds per 1-year hourly simulation": 0.078
+}
