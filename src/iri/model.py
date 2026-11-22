@@ -1,4 +1,4 @@
-"""Core hourly water-energy model for IRI Engine v0.1.
+"""Core hourly water-energy model for IRI Engine.
 
 This is a transparent screening model, not a detailed engineering design tool.
 """
@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from typing import Iterable
 import numpy as np
 import pandas as pd
+
+from .pump import PumpSystem, legacy_pump
+
+DISPATCH_POLICIES = {"rated", "reservoir_aware"}
 
 
 @dataclass
@@ -36,6 +40,10 @@ class SystemConfig:
     grid_energy_cost_per_kwh: float = 0.25
     timestep_hours: float = 1.0
 
+    # v0.2 dispatch controls (defaults reproduce v0.1)
+    dispatch_policy: str = "rated"
+    battery_pumping_below_level: float = 1.0  # battery may drive the pump only below this reservoir fraction
+
     def validate(self) -> None:
         positive = {
             "pv_capacity_kw": self.pv_capacity_kw,
@@ -54,11 +62,15 @@ class SystemConfig:
         if not 0 < self.charge_efficiency <= 1 or not 0 < self.discharge_efficiency <= 1:
             raise ValueError("battery efficiencies must be in (0, 1]")
         if not 0 <= self.min_soc <= self.initial_soc <= self.max_soc <= 1:
-            raise ValueError("SOC must satisfy 0 <= min < initial <= max <= 1")
+            raise ValueError("SOC must satisfy 0 <= min <= initial <= max <= 1")
         if self.initial_reservoir_m3 < 0 or self.initial_reservoir_m3 > self.reservoir_capacity_m3:
             raise ValueError("initial reservoir volume must be within reservoir bounds")
         if self.pv_derate <= 0:
             raise ValueError("pv_derate must be > 0")
+        if self.dispatch_policy not in DISPATCH_POLICIES:
+            raise ValueError(f"dispatch_policy must be one of {sorted(DISPATCH_POLICIES)}")
+        if not 0 <= self.battery_pumping_below_level <= 1:
+            raise ValueError("battery_pumping_below_level must be in [0, 1]")
 
 
 def pv_power_kw(
@@ -101,12 +113,23 @@ def simulate_system(
     config: SystemConfig,
     demand_m3_per_hour: Iterable[float] | None = None,
     pump_available: Iterable[bool] | None = None,
+    pump: PumpSystem | None = None,
 ) -> pd.DataFrame:
     """Simulate hourly system operation.
 
-    Required weather columns: irradiance_w_m2 and ambient_temp_c.
-    Dispatch priority: PV -> battery -> grid (if enabled). Pump flow is
-    proportionally curtailed when available electrical power is insufficient.
+    Required weather columns: irradiance_w_m2 (plane-of-array) and ambient_temp_c.
+    Dispatch priority: PV -> battery -> grid (if enabled).
+
+    ``pump`` maps electrical power to delivered flow. If omitted, the v0.1
+    behaviour is reproduced (ideal positive-displacement pump at fixed head,
+    flow proportional to power). Use a centrifugal ``PumpSystem`` with
+    borehole drawdown for realistic part-load behaviour.
+
+    ``config.dispatch_policy``:
+      - "rated": request full flow whenever the pump is available (v0.1).
+      - "reservoir_aware": request only the flow that fits the reservoir
+        headroom plus this hour's demand, and use the battery only when the
+        reservoir is below ``battery_pumping_below_level``.
     """
     config.validate()
     required = {"irradiance_w_m2", "ambient_temp_c"}
@@ -132,93 +155,115 @@ def simulate_system(
     if np.any(demand < 0):
         raise ValueError("water demand cannot be negative")
 
+    if pump is None:
+        pump = legacy_pump(config.pump_flow_m3_per_hour, config.total_dynamic_head_m,
+                           config.pump_efficiency)
+
     dt = config.timestep_hours
+    cap_kwh = config.battery_capacity_kwh
+    res_cap = config.reservoir_capacity_m3
     soc = config.initial_soc
     reservoir = config.initial_reservoir_m3
-    pump_kw_rated = pump_power_kw(
-        config.pump_flow_m3_per_hour,
-        config.total_dynamic_head_m,
-        config.pump_efficiency,
-    )
+    irr = weather["irradiance_w_m2"].to_numpy(dtype=float)
+    tamb = weather["ambient_temp_c"].to_numpy(dtype=float)
+    q_max = pump.max_flow
+    q_min = pump.min_flow if pump.kind == "centrifugal" else 0.0
 
-    rows = []
-    for i, (_, wx) in enumerate(weather.iterrows()):
-        pv_kw = pv_power_kw(
-            config.pv_capacity_kw,
-            float(wx["irradiance_w_m2"]),
-            float(wx["ambient_temp_c"]),
-            config.pv_derate,
-            config.pv_temp_coefficient_per_c,
-            config.cell_temp_noct_c,
-            config.reference_temp_c,
-        )
-        target_pump_kw = pump_kw_rated if available[i] else 0.0
-        pv_to_pump = min(pv_kw, target_pump_kw)
-        remaining_pump_kw = max(0.0, target_pump_kw - pv_to_pump)
+    cols = {k: np.zeros(n) for k in (
+        "pv_generation_kw", "pump_power_required_kw", "pv_to_pump_kw", "battery_to_pump_kw",
+        "grid_to_pump_kw", "battery_charge_kw", "pv_curtailed_kw", "battery_soc",
+        "pump_fraction", "pump_head_m", "water_produced_m3", "water_delivered_m3",
+        "unmet_water_m3", "reservoir_before_m3", "reservoir_after_m3",
+        "reservoir_overflow_m3", "grid_energy_kwh")}
 
+    for i in range(n):
+        pv_kw = pv_power_kw(config.pv_capacity_kw, irr[i], tamb[i], config.pv_derate,
+                            config.pv_temp_coefficient_per_c, config.cell_temp_noct_c,
+                            config.reference_temp_c)
+
+        # ---- flow request
+        if not available[i]:
+            q_target = 0.0
+        elif config.dispatch_policy == "rated":
+            q_target = q_max
+        else:
+            headroom = max(0.0, res_cap - reservoir) / dt + demand[i]
+            q_target = min(q_max, headroom)
+            if q_target < q_min:
+                q_target = 0.0
+        p_target = pump.power_for_flow(q_target)
+
+        # ---- power allocation
+        pv_to_pump = min(pv_kw, p_target)
+        remaining = p_target - pv_to_pump
+        battery_allowed = (config.dispatch_policy == "rated"
+                           or reservoir < config.battery_pumping_below_level * res_cap)
         battery_available_kw = min(
             config.max_discharge_kw,
-            max(0.0, (soc - config.min_soc) * config.battery_capacity_kwh
-                * config.discharge_efficiency / dt),
-        )
-        battery_to_pump = min(remaining_pump_kw, battery_available_kw)
-        remaining_pump_kw -= battery_to_pump
-        grid_to_pump = remaining_pump_kw if config.grid_available else 0.0
-        supplied_kw = pv_to_pump + battery_to_pump + grid_to_pump
-        pump_fraction = min(1.0, supplied_kw / pump_kw_rated) if pump_kw_rated > 0 else 0.0
-        if not available[i]:
-            pump_fraction = 0.0
+            max(0.0, (soc - config.min_soc) * cap_kwh * config.discharge_efficiency / dt),
+        ) if battery_allowed else 0.0
+        battery_to_pump = min(remaining, battery_available_kw)
+        remaining -= battery_to_pump
+        grid_to_pump = remaining if config.grid_available else 0.0
+        supplied = pv_to_pump + battery_to_pump + grid_to_pump
 
-        battery_energy_out = battery_to_pump * dt / config.discharge_efficiency
-        soc -= battery_energy_out / config.battery_capacity_kwh
-        soc = max(config.min_soc, soc)
+        q = min(q_target, pump.flow_for_power(supplied))
+        if q <= 0.0:  # below minimum drive power: nothing runs, nothing is drawn
+            pv_to_pump = battery_to_pump = grid_to_pump = 0.0
+        else:  # draw only the power the operating point needs (pro rata across sources)
+            used = pump.power_for_flow(q)
+            scale = used / supplied if supplied > 0 else 0.0
+            pv_to_pump *= scale
+            battery_to_pump *= scale
+            grid_to_pump *= scale
 
-        pv_surplus_kw = max(0.0, pv_kw - pv_to_pump)
-        charge_headroom_kw = max(
-            0.0,
-            (config.max_soc - soc) * config.battery_capacity_kwh
-            / (config.charge_efficiency * dt),
-        )
-        charge_kw = min(pv_surplus_kw, config.max_charge_kw, charge_headroom_kw)
-        soc += charge_kw * dt * config.charge_efficiency / config.battery_capacity_kwh
-        soc = min(config.max_soc, max(config.min_soc, soc))
+        soc -= battery_to_pump * dt / config.discharge_efficiency / cap_kwh
+        pv_surplus = max(0.0, pv_kw - pv_to_pump)
+        charge_headroom_kw = max(0.0, (config.max_soc - soc) * cap_kwh
+                                 / (config.charge_efficiency * dt))
+        charge_kw = min(pv_surplus, config.max_charge_kw, charge_headroom_kw)
+        soc += charge_kw * dt * config.charge_efficiency / cap_kwh
 
-        water_produced = config.pump_flow_m3_per_hour * pump_fraction * dt
-        reservoir_before = reservoir
-        available_water = reservoir + water_produced
-        water_delivered = min(float(demand[i]), available_water)
-        unmet_water = max(0.0, float(demand[i]) - water_delivered)
-        reservoir = min(
-            config.reservoir_capacity_m3,
-            max(0.0, available_water - water_delivered),
-        )
-        overflow = max(0.0, available_water - water_delivered - config.reservoir_capacity_m3)
+        # ---- water balance
+        produced = q * dt
+        before = reservoir
+        avail_water = reservoir + produced
+        delivered = min(demand[i] * dt, avail_water)
+        reservoir = min(res_cap, avail_water - delivered)
+        overflow = max(0.0, avail_water - delivered - res_cap)
 
-        grid_energy = grid_to_pump * dt
-        rows.append({
-            "timestep": i,
-            "irradiance_w_m2": float(wx["irradiance_w_m2"]),
-            "ambient_temp_c": float(wx["ambient_temp_c"]),
-            "pv_generation_kw": pv_kw,
-            "pump_available": bool(available[i]),
-            "pump_power_required_kw": target_pump_kw,
-            "pv_to_pump_kw": pv_to_pump,
-            "battery_to_pump_kw": battery_to_pump,
-            "grid_to_pump_kw": grid_to_pump,
-            "battery_charge_kw": charge_kw,
-            "battery_soc": soc,
-            "pump_fraction": pump_fraction,
-            "water_produced_m3": water_produced,
-            "water_demand_m3": float(demand[i]),
-            "water_delivered_m3": water_delivered,
-            "unmet_water_m3": unmet_water,
-            "reservoir_before_m3": reservoir_before,
-            "reservoir_after_m3": reservoir,
-            "reservoir_overflow_m3": overflow,
-            "grid_energy_kwh": grid_energy,
-            "grid_cost": grid_energy * config.grid_energy_cost_per_kwh,
-        })
-    return pd.DataFrame(rows)
+        c = cols
+        c["pv_generation_kw"][i] = pv_kw
+        c["pump_power_required_kw"][i] = p_target
+        c["pv_to_pump_kw"][i] = pv_to_pump
+        c["battery_to_pump_kw"][i] = battery_to_pump
+        c["grid_to_pump_kw"][i] = grid_to_pump
+        c["battery_charge_kw"][i] = charge_kw
+        c["pv_curtailed_kw"][i] = pv_surplus - charge_kw
+        c["battery_soc"][i] = soc
+        c["pump_fraction"][i] = q / config.pump_flow_m3_per_hour
+        c["pump_head_m"][i] = pump.head_at_flow(q)
+        c["water_produced_m3"][i] = produced
+        c["water_delivered_m3"][i] = delivered
+        c["unmet_water_m3"][i] = demand[i] * dt - delivered
+        c["reservoir_before_m3"][i] = before
+        c["reservoir_after_m3"][i] = reservoir
+        c["reservoir_overflow_m3"][i] = overflow
+        c["grid_energy_kwh"][i] = grid_to_pump * dt
+
+    out = pd.DataFrame({"timestep": np.arange(n), "irradiance_w_m2": irr,
+                        "ambient_temp_c": tamb, "pump_available": available, **cols,
+                        "water_demand_m3": demand * dt})
+    out["grid_cost"] = out["grid_energy_kwh"] * config.grid_energy_cost_per_kwh
+    return out
+
+
+def _longest_run(mask: np.ndarray) -> int:
+    best = cur = 0
+    for m in mask:
+        cur = cur + 1 if m else 0
+        best = max(best, cur)
+    return best
 
 
 def summarise_results(results: pd.DataFrame) -> dict:
@@ -237,4 +282,8 @@ def summarise_results(results: pd.DataFrame) -> dict:
         "minimum_reservoir_m3": float(results["reservoir_after_m3"].min()),
         "maximum_reservoir_m3": float(results["reservoir_after_m3"].max()),
         "pump_unavailable_hours": int((~results["pump_available"]).sum()),
+        "hours_with_unmet_demand": int((results["unmet_water_m3"] > 1e-9).sum()),
+        "longest_unmet_spell_hours": _longest_run((results["unmet_water_m3"] > 1e-9).to_numpy()),
+        "total_overflow_m3": float(results["reservoir_overflow_m3"].sum()),
+        "total_pv_curtailed_kwh": float(results["pv_curtailed_kw"].sum()),
     }

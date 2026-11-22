@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from iri import SystemConfig, simulate_system, run_monte_carlo
 from iri.model import summarise_results
 
+OUT = Path("outputs"); OUT.mkdir(exist_ok=True)
+
 # Illustrative 7-day hourly profile. Replace with site-specific data.
 hours = np.arange(24 * 7)
 hour_of_day = hours % 24
@@ -38,7 +40,7 @@ config = SystemConfig(
 )
 
 baseline = simulate_system(weather, config)
-baseline.to_csv("baseline_results.csv", index=False)
+baseline.to_csv(OUT / "baseline_results.csv", index=False)
 
 mc_samples, mc_summary = run_monte_carlo(
     weather, config, n_simulations=250, seed=42,
@@ -46,8 +48,8 @@ mc_samples, mc_summary = run_monte_carlo(
     pump_hourly_unavailability=0.002,
     pump_efficiency_cv=0.05,
 )
-mc_samples.to_csv("monte_carlo_samples.csv", index=False)
-with open("monte_carlo_summary.json", "w", encoding="utf-8") as f:
+mc_samples.to_csv(OUT / "monte_carlo_samples.csv", index=False)
+with open(OUT / "monte_carlo_summary.json", "w", encoding="utf-8") as f:
     json.dump(mc_summary, f, indent=2)
 
 print("Baseline metrics:")
@@ -70,6 +72,5 @@ axes[2].set_xlabel("Hour")
 axes[2].legend()
 fig.suptitle("IRI Engine v0.1 — illustrative 7-day simulation")
 fig.tight_layout()
-fig.savefig("baseline_plot.png", dpi=160)
-print("\nWrote baseline_results.csv, monte_carlo_samples.csv, "
-      "monte_carlo_summary.json and baseline_plot.png")
+fig.savefig(OUT / "baseline_plot.png", dpi=160)
+print(f"\nWrote outputs to {OUT.resolve()}")
